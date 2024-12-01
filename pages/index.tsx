@@ -1,115 +1,155 @@
-import Image from "next/image";
-import localFont from "next/font/local";
+import React, { useState } from 'react';
+import { ethers } from 'ethers';
+import { toBytes, isAddress } from 'viem';
+import {BigNumber} from "@ethersproject/bignumber";
+import IOFTABI from "../abi/IOFT.json";
+import ERC20ABI from "../abi/ERC20.json";
 
-const geistSans = localFont({
-  src: "./fonts/GeistVF.woff",
-  variable: "--font-geist-sans",
-  weight: "100 900",
-});
-const geistMono = localFont({
-  src: "./fonts/GeistMonoVF.woff",
-  variable: "--font-geist-mono",
-  weight: "100 900",
-});
 
 export default function Home() {
-  return (
-    <div
-      className={`${geistSans.variable} ${geistMono.variable} grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]`}
-    >
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              pages/index.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+    const [currentAccount, setCurrentAccount] = useState(null);
+    const [amount, setAmount] = useState(0);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
+    // MetaMask 연결 함수
+    const connectWallet = async () => {
+        if (!window.ethereum) {
+            alert('MetaMask가 설치되어 있지 않습니다!');
+            return;
+        }
+
+        try {
+            const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+            setCurrentAccount(accounts[0]);
+            console.log('연결된 계정:', accounts[0]);
+        } catch (error) {
+            console.error('MetaMask 연결 오류:', error);
+        }
+    };
+
+    // 주소를 Bytes32로 변환하는 함수
+    function addressToBytes32(address: string): string {
+        // 주소가 유효한지 확인
+        if (!isAddress(address)) {
+            throw new Error("Invalid address");
+        }
+
+        // 주소를 바이트 배열로 변환
+        const bytes = toBytes(address);
+
+        // 바이트 배열의 길이가 32바이트가 되도록 패딩
+        const paddedBytes = new Uint8Array(32); // 32바이트 크기 배열 생성
+        paddedBytes.set(bytes, 32 - bytes.length); // 주소의 바이트를 배열 끝에 맞춰 넣기
+
+        // 32바이트 배열을 16진수 문자열로 변환하여 반환
+        return `0x${Array.from(paddedBytes).map(byte => byte.toString(16).padStart(2, '0')).join('')}`;
+    }
+
+    // 스마트 컨트랙트 호출 함수
+    const sendTokens = async () => {
+        if (!currentAccount) {
+            alert('먼저 MetaMask 지갑을 연결해주세요!');
+            return;
+        }
+
+        try {
+            const contractAddress = "0x426E7d03f9803Dd11cb8616C65b99a3c0AfeA6dE";
+
+            const dstEid = 40161; // 목적지 엔드포인트 ID
+            const amount = 7; // 전송할 토큰 양
+            const provider = new ethers.BrowserProvider(window.ethereum);
+            const signer = await provider.getSigner();
+            const token = new ethers.Contract(contractAddress, IOFTABI, signer);
+
+
+
+
+            // @ts-ignore
+            const usdeContractAddress = "0x426E7d03f9803Dd11cb8616C65b99a3c0AfeA6dE";
+            const usdeToken = new ethers.Contract(usdeContractAddress, ERC20ABI, signer);
+            const approveTx = await usdeToken.approve(contractAddress, 100000000000000)
+            await approveTx.wait()
+
+            const amountLD = BigNumber.from(amount)
+
+            const sendParam = {
+                dstEid,
+                to: addressToBytes32(signer.address),
+                amountLD: amountLD.mul(BigNumber.from(10).pow(18)).toString(),
+                minAmountLD: amountLD.mul(BigNumber.from(10).pow(18)).toString(),
+                extraOptions: '0x000301001101000000000000000000000000000186a0',
+                composeMsg: '0x',
+                oftCmd: '0x',
+            }
+            console.log(sendParam);
+            // @ts-ignore
+            const msgFee = await token.quoteSend(sendParam, false)
+
+            console.log(msgFee);
+            const txResponse = await token.send(sendParam, [msgFee[0].toString(), msgFee[1].toString()], signer.address, {
+                value: msgFee.nativeFee
+            })
+            const txReceipt = await txResponse.wait()
+            console.log(txReceipt);
+
+
+            // @ts-ignore
+            alert('트랜잭션 완료! 상태: ' + txReceipt.status);
+        } catch (error) {
+            console.error('스마트 컨트랙트 호출 오류:', error);
+            alert('오류 발생: ');
+        }
+    };
+
+    return (
+        <div style={{textAlign: 'center', marginTop: '50px'}}>
+            <input
+                type="text"
+                value={amount}
+                onChange={(e) => setAmount(Number(e.target.value))}
+                placeholder="Enter amount"
+                style={{
+                    padding: '10px',
+                    fontSize: '16px',
+                    marginBottom: '20px',
+                    borderRadius: '5px',
+                    border: '1px solid #ccc',
+                    color: '#000', // Text color
+                    backgroundColor: '#fff', // Background color
+                }}
             />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+            {currentAccount ? (
+                <p>Wallet Address: {currentAccount}</p>
+            ) : (
+                <button
+                    onClick={connectWallet}
+                    style={{
+                        padding: '10px 20px',
+                        fontSize: '16px',
+                        cursor: 'pointer',
+                        backgroundColor: '#0070f3',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '5px',
+                        marginBottom: '20px',
+                    }}
+                >
+                    MetaMask 지갑 연결
+                </button>
+            )}
+            <button
+                onClick={sendTokens}
+                style={{
+                    padding: '10px 20px',
+                    fontSize: '16px',
+                    cursor: 'pointer',
+                    backgroundColor: '#28a745',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '5px',
+                }}
+            >
+                cross chain sendTokens Ethena Network to Sepolia Network
+            </button>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=default-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
-  );
+    );
 }
